@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#f4f5f7">
+<title>JanaMen — HR пространство</title><link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<div id="loginScreen" class="login-screen">
+  <div class="login-intro">
+    <div class="wordmark">JanaMen<span class="wordmark-period">.</span></div>
+    <div class="intro-label">ЦИФРОВАЯ HR-ПЛАТФОРМА</div>
+    <h1>Все рабочие<br>вопросы —<br><span>в одном месте.</span></h1>
+    <p>Кадровая информация, заявки, обучение и помощь HR в едином понятном пространстве.</p>
+    <div class="intro-foot"><span class="foot-line"></span><span>DEMO · CASE 02 / DIGITAL HR</span></div>
+  </div>
+  <section class="login-panel">
+    <div class="login-panel-top"><span class="eyebrow">ДОБРО ПОЖАЛОВАТЬ</span><span class="demo-pill">ДЕМО-СРЕДА</span></div>
+    <h2>Войти в JanaMen</h2><p class="muted">Выберите тестовую роль или введите учётные данные.</p>
+    <form id="loginForm" class="login-form">
+      <label>Логин<input id="loginUsername" name="username" autocomplete="username" placeholder="Например, aliya" required></label>
+      <label>Пароль<div class="password-row"><input id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="Введите пароль" required><button id="togglePassword" type="button" class="text-button">Показать</button></div></label>
+      <div id="loginError" class="inline-error hidden" role="alert"></div>
+      <button class="button primary full" id="loginSubmit" type="submit">Войти <span aria-hidden="true">→</span></button>
+    </form>
+    <div class="login-divider"><span>БЫСТРЫЙ ДЕМО-ДОСТУП</span></div>
+    <div class="demo-users">
+      <button class="demo-user" data-demo-user="aliya" data-demo-pass="Employee2026!"><span class="demo-initial">АС</span><span class="demo-user-text"><strong>Сотрудник</strong><small>aliya · Employee2026!</small></span><span class="select-arrow">↗</span></button>
+      <button class="demo-user" data-demo-user="daniyar" data-demo-pass="Manager2026!"><span class="demo-initial manager">ДА</span><span class="demo-user-text"><strong>Руководитель</strong><small>daniyar · Manager2026!</small></span><span class="select-arrow">↗</span></button>
+      <button class="demo-user" data-demo-user="madina" data-demo-pass="Hr2026!"><span class="demo-initial hr">МЕ</span><span class="demo-user-text"><strong>HR / администратор</strong><small>madina · Hr2026!</small></span><span class="select-arrow">↗</span></button>
+    </div>
+    <p class="demo-warning">Используются только синтетические демонстрационные данные.</p>
+  </section>
+</div>
+
+<div id="app" class="app hidden">
+  <header class="topbar">
+    <a class="wordmark app-wordmark" href="#home" data-page="home">JanaMen<span class="wordmark-period">.</span></a>
+    <div class="topbar-divider"></div>
+    <div class="workspace-name"><span class="workspace-dot"></span><span>Рабочее пространство</span></div>
+    <nav id="mainNav" class="main-nav" aria-label="Основная навигация"></nav>
+    <div class="topbar-right"><button id="notificationShortcut" class="icon-button" aria-label="Уведомления" title="Уведомления"><span class="bell-icon">◌</span><span id="notificationDot" class="notification-dot hidden"></span></button><div class="user-menu"><button id="avatar" class="user-avatar" aria-label="Профиль">АС</button><div class="user-menu-copy"><strong id="headerName">Алия</strong><span id="headerRole">Сотрудник</span></div><button id="logoutButton" class="text-button logout-button">Выйти</button></div></div>
+  </header>
+  <main id="pageRoot" class="page-root" tabindex="-1"></main>
+  <footer class="app-footer"><span>JanaMen · Digital HR MVP</span><span>Демо-данные · кадровые атрибуты только для чтения</span></footer>
+</div>
+<div id="modalRoot" class="modal-root hidden" role="dialog" aria-modal="true" aria-labelledby="modalTitle"><div class="modal-backdrop" data-action="close-modal"></div><section id="modalContent" class="modal-card"></section></div>
+<div id="toastRegion" class="toast-region" aria-live="polite"></div>
+<script src="/static/app.js" defer></script>
+</body></html>
