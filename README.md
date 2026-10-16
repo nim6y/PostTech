@@ -13,11 +13,11 @@
 
 ## Стек
 
-Frontend — HTML5, CSS3, JavaScript (Vanilla)
-Backend — Python, FastAPI
-Pydantic
-Docker, Docker Compose
-Uvicorn
+1. Frontend — HTML5, CSS3, JavaScript (Vanilla)
+2. Backend — Python, FastAPI
+3. Pydantic
+4. Docker, Docker Compose
+5. Uvicorn
 
 ## Реализованные сценарии
 
