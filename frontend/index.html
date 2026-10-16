@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f6faf7"><title>JanaMen — цифровой HR</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar">
+    <a class="brand" href="#" data-page="dashboard"><span class="brand-mark">J</span><span>Jana<span class="brand-light">Men</span><small>PEOPLE PLATFORM</small></span></a>
+    <div class="workspace-label">РАБОЧЕЕ ПРОСТРАНСТВО</div>
+    <nav id="nav">
+      <button class="nav-item active" data-page="dashboard"><span class="nav-icon">⌂</span>Обзор</button>
+      <button class="nav-item" data-page="profile"><span class="nav-icon">◉</span>Мой профиль</button>
+      <button class="nav-item" data-page="requests"><span class="nav-icon">▤</span>Мои заявки <span class="nav-count" id="requestCount">2</span></button>
+      <button class="nav-item" data-page="academy"><span class="nav-icon">▣</span>Jana Academy</button>
+      <button class="nav-item" data-page="assistant"><span class="nav-icon">✳</span>AI Jana <span class="new-dot"></span></button>
+      <button class="nav-item" data-page="notifications"><span class="nav-icon">♧</span>Уведомления <span class="nav-count" id="notifCount">2</span></button>
+      <button class="nav-item hidden" id="adminNav" data-page="admin"><span class="nav-icon">⚙</span>HR-управление</button>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="help-card"><div class="help-icon">✳</div><strong>Нужна помощь?</strong><p>AI Jana подскажет по типовым HR-вопросам.</p><button class="text-button" data-page="assistant">Задать вопрос <span>↗</span></button></div>
+      <div class="side-foot"><span class="status-dot"></span>Все системы работают</div>
+    </div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div class="breadcrumbs"><span>JanaMen</span><span class="crumb-slash">/</span><strong id="crumb">Обзор</strong></div>
+      <div class="top-actions">
+        <button class="icon-button" aria-label="Уведомления" data-page="notifications">♧<i id="topUnread"></i></button>
+        <div class="top-divider"></div>
+        <label class="role-switch"><span>Демо-роль</span><select id="roleSelect" aria-label="Выбрать демо-роль"><option value="employee">Сотрудник</option><option value="manager">Руководитель</option><option value="hr">HR / администратор</option></select></label>
+        <button class="avatar" id="avatar" title="Мой профиль">АС</button>
+      </div>
+    </header>
+    <section class="content" id="content"><div class="loading"><span class="spinner"></span>Загружаем рабочее пространство…</div></section>
+    <footer class="footer"><span>© 2026 JanaMen · Внутренние сервисы Jana Post</span><span><i class="status-dot"></i> Демо-среда · тестовые данные</span></footer>
+  </main>
+</div>
+<div class="toast-region" id="toasts" aria-live="polite"></div>
+<div class="modal-backdrop hidden" id="modalBackdrop"><section class="modal" id="modal"></section></div>
+<script src="/static/app.js"></script>
+</body></html>
