@@ -3,9 +3,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from pathlib import Path
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Optional
-import secrets, hmac, re, uuid
+import secrets, hmac, re, uuid, threading
 
 app = FastAPI(title="JanaMen Digital HR", version="2.0.0", description="Digital HR hackathon MVP; demo data only")
 ROOT = Path(__file__).resolve().parent.parent
@@ -20,11 +20,23 @@ USERS = {
 }
 PASSWORDS = {"aliya":"Employee2026!", "timur":"Employee2026!", "daniyar":"Manager2026!", "madina":"Hr2026!"}
 SESSIONS: dict[str, str] = {}
+REQUEST_LOCK = threading.RLock()
+ADVANCE_LIMIT_KZT = 150000  # Demo policy; replace with company-specific policy
+
 
 def stamp(): return datetime.now().strftime("%Y-%m-%d %H:%M")
 def available_vacation_days(u):
- reserved=sum((r.get("days") or 0) for r in REQUESTS if r["user_id"]==u["id"] and r["type"]=="Отпуск" and r["status"] in ("На согласовании у руководителя","Одобрена руководителем") and r.get("end_date") and r["end_date"] >= date.today().isoformat())
- return max(0, u["vacation_days"]-reserved)
+ reserved = sum((r.get("days") or 0) for r in REQUESTS if r["user_id"] == u["id"] and r["type"] == "Отпуск" and r["status"] in ("На согласовании у руководителя", "Одобрена руководителем") and r.get("end_date") and r["end_date"] >= date.today().isoformat())
+ return max(0, u["vacation_days"] - reserved)
+
+def overlaps_existing_leave(user_id, start, end):
+ for r in REQUESTS:
+  if r["user_id"] != user_id or r["type"] != "Отпуск" or r["status"] not in ("На согласовании у руководителя", "Одобрена руководителем"):
+   continue
+  if r.get("start_date") and r.get("end_date") and start <= date.fromisoformat(r["end_date"]) and end >= date.fromisoformat(r["start_date"]):
+   return True
+ return False
+
 def user_public(u):
  result={k:v for k,v in u.items() if k not in ("username", "manager_id", "active")}
  result["vacation_days"]=available_vacation_days(u)
@@ -80,6 +92,7 @@ class RequestBody(BaseModel):
  start_date: Optional[date] = None
  end_date: Optional[date] = None
  reason: str = Field(default="", max_length=300)
+ amount: Optional[int] = Field(default=None, ge=1)
 class AskBody(BaseModel): question: str = Field(min_length=1, max_length=500)
 class ProgressBody(BaseModel): lesson_index: int = Field(ge=0, le=20)
 class AssignCourseBody(BaseModel): user_id: str; course_id: str
@@ -127,20 +140,42 @@ def notifications_for(u):
 @app.get("/api/requests")
 def list_requests(authorization: Optional[str]=Header(default=None)):
  u=get_user(authorization); return [r for r in REQUESTS if can_see_request(u,r)]
-@app.post("/api/requests",status_code=201)
+@app.get("/api/requests/policy")
+def request_policy(authorization: Optional[str] = Header(default=None)):
+ u = get_user(authorization)
+ return {"vacation_available_days": available_vacation_days(u), "advance_limit_kzt": ADVANCE_LIMIT_KZT, "advance_currency": "KZT", "advance_requires_reason": True}
+
+@app.post("/api/requests", status_code=201)
 def create_request(body: RequestBody, authorization: Optional[str]=Header(default=None)):
  u=get_user(authorization); require_role(u,"employee")
- days=body.days; period=body.period
- if body.type=="Отпуск":
-  if not body.start_date or not body.end_date: raise HTTPException(422,"Для отпуска выберите даты начала и окончания")
-  if body.end_date < body.start_date: raise HTTPException(422,"Дата окончания не может быть раньше даты начала")
-  days=(body.end_date-body.start_date).days+1
-  available=available_vacation_days(u)
-  if body.start_date < date.today(): raise HTTPException(422,"Дата начала отпуска не может быть в прошлом")
-  if days>available: raise HTTPException(422,f"Выбрано {days} дней, доступный остаток — {available} дней")
-  period=f"{body.start_date.strftime('%d.%m.%Y')} — {body.end_date.strftime('%d.%m.%Y')}"
- rid="REQ-"+str(1050+len(REQUESTS)); req={"id":rid,"user_id":u["id"],"employee_name":u["name"],"type":body.type,"created_at":date.today().isoformat(),"start_date":body.start_date.isoformat() if body.start_date else None,"end_date":body.end_date.isoformat() if body.end_date else None,"period":period,"days":days if body.type=="Отпуск" else None,"reason":body.reason or "—","status":"На согласовании у руководителя","history":[{"date":stamp(),"event":"Заявка создана сотрудником"},{"date":stamp(),"event":"Передана руководителю команды"}]}
- REQUESTS.insert(0,req); NOTIFICATIONS.insert(0,{"id":"N-"+uuid.uuid4().hex[:5],"user_id":u["id"],"title":f"Заявка {rid} создана","detail":"Передана руководителю команды","unread":True,"created_at":date.today().isoformat()}); return req
+ with REQUEST_LOCK:
+  days=None; amount=None; period=""
+  if body.type=="Отпуск":
+   if not body.start_date or not body.end_date: raise HTTPException(422,"Для отпуска выберите даты начала и окончания")
+   if body.end_date < body.start_date: raise HTTPException(422,"Дата окончания не может быть раньше даты начала")
+   if body.start_date < date.today(): raise HTTPException(422,"Дата начала отпуска не может быть в прошлом")
+   days=(body.end_date-body.start_date).days+1
+   if days>366: raise HTTPException(422,"Период отпуска слишком длинный")
+   if body.days is not None and body.days!=days: raise HTTPException(422,"Количество дней не совпадает с выбранным периодом")
+   if overlaps_existing_leave(u["id"],body.start_date,body.end_date): raise HTTPException(409,"На выбранные даты уже есть активная заявка на отпуск")
+   available=available_vacation_days(u)
+   if days>available: raise HTTPException(422,f"Выбрано {days} дней, доступный остаток — {available} дней")
+   period=f"{body.start_date:%d.%m.%Y} — {body.end_date:%d.%m.%Y}"
+  else:
+   if body.start_date or body.end_date or body.days: raise HTTPException(422,"Для аванса даты отпуска не требуются")
+   if body.amount is None: raise HTTPException(422,"Укажите сумму аванса в тенге")
+   if body.amount>ADVANCE_LIMIT_KZT: raise HTTPException(422,f"Сумма аванса превышает демо-лимит {ADVANCE_LIMIT_KZT} ₸")
+   if not body.reason.strip(): raise HTTPException(422,"Укажите причину запроса аванса")
+   if any(r["user_id"]==u["id"] and r["type"]=="Аванс" and r["status"]=="На согласовании у руководителя" for r in REQUESTS):
+    raise HTTPException(409,"У вас уже есть аванс на согласовании")
+   amount=body.amount
+   period=date.today().strftime("%m.%Y")
+  rid="REQ-"+uuid.uuid4().hex[:8].upper()
+  req={"id":rid,"user_id":u["id"],"employee_name":u["name"],"type":body.type,"created_at":date.today().isoformat(),"start_date":body.start_date.isoformat() if body.type=="Отпуск" else None,"end_date":body.end_date.isoformat() if body.type=="Отпуск" else None,"period":period,"days":days,"amount":amount,"currency":"KZT" if amount else None,"reason":body.reason.strip() or "—","status":"На согласовании у руководителя","history":[{"date":stamp(),"event":"Заявка создана сотрудником"},{"date":stamp(),"event":"Передана руководителю команды"}]}
+  REQUESTS.insert(0,req)
+  NOTIFICATIONS.insert(0,{"id":"N-"+uuid.uuid4().hex[:8],"user_id":u["id"],"title":f"Заявка {rid} создана","detail":"Передана руководителю команды","unread":True,"created_at":date.today().isoformat()})
+  return req
+
 @app.get("/api/requests/{request_id}")
 def request_detail(request_id: str, authorization: Optional[str]=Header(default=None)):
  u=get_user(authorization); r=next((r for r in REQUESTS if r["id"]==request_id),None)
