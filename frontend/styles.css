@@ -5852,3 +5852,13 @@ button:hover, .action-list button:hover, .request-entry-actions button:hover,
 .source-link { border: 0; background: none; padding: 0; color: #187847; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; font: inherit; text-align: left; }
 .source-link:hover { color: #0e5731; }
 .source-link:focus-visible { outline: 2px solid #187847; outline-offset: 3px; border-radius: 2px; }
+
+/* Управление составом команды */
+.team-management{margin:20px 0 26px;padding:24px}
+.team-add-form{display:flex;gap:12px;align-items:center;margin:16px 0}
+.team-add-form select{flex:1;min-width:0}
+.team-join-list{margin-top:12px}
+.team-join-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:15px 4px;border-bottom:1px solid rgba(50,90,70,.12)}
+.team-join-row small{display:block;color:#68786e;margin-top:5px}
+.team-join-actions{display:flex;gap:8px;flex-wrap:wrap}
+@media(max-width:650px){.team-add-form,.team-join-row{flex-direction:column;align-items:stretch}}

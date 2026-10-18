@@ -1,6 +1,6 @@
 const root=document.querySelector('#root');
 const S={
-    token:sessionStorage.getItem('jana_token'),user:null,requests:[],courses:[],notes:[],team:[],hr:null,page:'home',chat:[],filter:'all',auth:'login',policy:null
+    token:sessionStorage.getItem('jana_token'),user:null,requests:[],courses:[],notes:[],team:[],teamAvailable:[],teamJoins:[],hr:null,page:'home',chat:[],filter:'all',auth:'login',policy:null
 };
 const roles={
     employee:'Сотрудник',manager:'Руководитель',hr:'HR / администратор'
@@ -45,6 +45,8 @@ async function sync(){
     S.user=await api('/me');
     [S.requests,S.notes,S.courses]=await Promise.all([api('/requests'),api('/notifications'),api('/courses')]);
     S.team=S.user.role==='manager'?await api('/team'):[];
+    S.teamAvailable=S.user.role==='manager'?await api('/team/available'):[];
+    S.teamJoins=['manager','hr'].includes(S.user.role)?await api('/team/join-requests'):[];
     S.hr=S.user.role==='hr'?await api('/hr/overview'):null
 }
 async function signIn(u,p){
@@ -355,8 +357,15 @@ async function viewProfile(id){
     }
 }
 function team(){
-    return `${intro('КОМАНДА / ОБЗОР','Моя команда.','Только сотрудники, находящиеся в зоне ответственности руководителя.')}<div class="people-grid">${S.team.map(u=>`<div class="panel"><div class="avatar">${esc(initial(u.name))}</div><h3 style="margin:15px 0 5px">${esc(u.name)}</h3><p class="muted">${esc(u.position)}</p><div class="notice">${u.requests_pending} заявок на рассмотрении · ${u.vacation_days} дней отпуска</div><button class="btn secondary small" data-action="view-profile" data-id="${esc(u.id)}">Просмотреть профиль ↗</button></div>`).join('')}</div>`
+    const available=S.teamAvailable||[],pending=(S.teamJoins||[]);
+    return `${intro('КОМАНДА / ОБЗОР','Моя команда.','Состав команды подтверждает HR. Руководитель видит только своих сотрудников.')}
+    <section class="panel team-management"><h2>Добавить сотрудника</h2><button type="button" class="btn secondary small" data-action="refresh-team">Обновить список ↻</button><p class="muted">Выберите свободного сотрудника своего отдела. HR подтвердит назначение.</p>
+    <form id="team-join-form" class="team-add-form"><select class="field" name="employee_id" required><option value="">Выберите сотрудника</option>${available.map(x=>`<option value="${esc(x.id)}">${esc(x.name)} · ${esc(x.position)}</option>`).join('')}</select><button class="btn" type="submit" ${!available.length?'disabled':''}>Отправить HR →</button></form>
+    ${!available.length?'<p class="muted">Свободных сотрудников в вашем отделе сейчас нет.</p>':''}
+    ${pending.length?`<h3>Запросы на добавление</h3><div class="team-join-list">${pending.map(x=>`<div class="team-join-row"><span>${esc(x.employee_name)}</span><span>${x.status==='pending'?'Ожидает HR':x.status==='approved'?'Подтверждено':'Отклонено'}</span></div>`).join('')}</div>`:''}</section>
+    <h2>Сотрудники команды (${S.team.length})</h2><div class="people-grid">${S.team.map(u=>`<div class="panel"><div class="avatar">${esc(initial(u.name))}</div><h3 style="margin:15px 0 5px">${esc(u.name)}</h3><p class="muted">${esc(u.position)}</p><div class="notice">${u.requests_pending} заявок на рассмотрении · ${u.vacation_days} дней отпуска</div><button class="btn secondary small" data-action="view-profile" data-id="${esc(u.id)}">Просмотреть профиль ↗</button></div>`).join('')||'<p class="muted">Пока нет сотрудников. Отправьте запрос HR.</p>'}</div>`
 }
+
 const RBAC_ROLES={
     employee:{
         name:'Сотрудник',description:'Личные HR-сервисы без доступа к данным коллег.',rights:['Личный профиль (просмотр)','Свои заявки (создание и просмотр)','Назначенные курсы','AI Jana и уведомления']
@@ -368,8 +377,10 @@ const RBAC_ROLES={
 };
 function people(){
     const users=S.hr?.users||[],count=r=>users.filter(u=>u.role===r).length;
-    const capabilities=[['Свой профиль (просмотр)','✓','✓','✓'],['Профиль своей команды','—','✓','✓'],['Профили сотрудников организации','—','—','✓'],['Свои заявки (создание)','✓','—','—'],['Согласование заявок команды','—','✓','—'],['Просмотр своей команды','—','✓','—'],['Все заявки (просмотр)','—','—','✓'],['Назначение курсов','—','—','✓'],['Управление ролями','—','—','✓'],['База знаний и интеграции','—','—','✓']];
-    return `<div class="rbac-screen"><div class="rbac-top"><div><span class="eyebrow">HR / БЕЗОПАСНОСТЬ ДОСТУПА</span><h1>Роли и доступы</h1><p>Настраивайте доступ к разделам JanaMen. Должность и системная роль — разные понятия.</p></div><span class="rbac-security">&nbsp; Права проверяются сервером</span></div><div class="rbac-stats">${[['Всего пользователей',users.length,'all'],['Сотрудники',count('employee'),'employee'],['Руководители',count('manager'),'manager'],['HR / администраторы',count('hr'),'hr']].map(([title,num,kind])=>`<div class="rbac-stat"><small>${title}</small><strong>${num}</strong><span class="rbac-stat-dot ${kind}"></span></div>`).join('')}</div><section class="rbac-panel"><div class="rbac-panel-title"><div><h2>Сотрудники и доступы</h2><p>Роль определяет доступные разделы и действия.</p></div><label class="rbac-search-wrap"><span>⌕</span><input id="rbac-search" type="search" placeholder="Поиск по имени или отделу" aria-label="Поиск сотрудников"></label></div><div class="rbac-table-wrap"><table class="rbac-table"><thead><tr><th>Сотрудник</th><th>Должность / подразделение</th><th>Роль в системе</th><th>Доступ</th><th></th></tr></thead><tbody id="rbac-users">${users.map(u=>`<tr data-rbac-search="${esc((u.name+' '+u.department+' '+u.position+' '+u.username).toLowerCase())}"><td><div class="rbac-person"><span class="rbac-avatar">${esc(initial(u.name))}</span><span><strong>${esc(u.name)}</strong><small>@${esc(u.username)}${u.username===S.user.username?' · Вы':''}</small></span></div></td><td><strong>${esc(u.position)}</strong><small>${esc(u.department)}</small></td><td><span class="rbac-role ${esc(u.role)}">${esc(RBAC_ROLES[u.role]?.name||u.role)}</span></td><td><span class="rbac-access ${u.active?'on':'off'}">${u.active?'Активен':'Неактивен'}</span></td><td><button class="rbac-view-profile" data-action="view-profile" data-id="${esc(u.id)}">Профиль ↗</button><button class="rbac-edit" data-action="rbac-edit" data-id="${esc(u.username)}" ${u.username===S.user.username?'disabled title="Собственную роль менять нельзя"':''}>${u.username===S.user.username?'Ваша роль':'Настроить →'}</button></td></tr>`).join('')}</tbody></table></div><p class="rbac-no-results hidden" id="rbac-no-results">Сотрудники не найдены.</p></section><section class="rbac-panel"><div class="rbac-panel-title"><div><h2>Матрица прав доступа</h2><p>Кто и что может делать в системе. Изменение роли применяет готовый набор прав.</p></div></div><div class="rbac-table-wrap"><table class="rbac-table rbac-matrix"><thead><tr><th>Действие</th><th>Сотрудник</th><th>Руководитель</th><th>HR / администратор</th></tr></thead><tbody>${capabilities.map(([name,...vals])=>`<tr><td>${name}</td>${vals.map(v=>`<td><span class="rbac-check ${v==='✓'?'yes':'no'}">${v}</span></td>`).join('')}</tr>`).join('')}</tbody></table></div><div class="rbac-footnote">Матрица показывает ключевые полномочия MVP. API дополнительно проверяет роль и принадлежность данных пользователю.</div></section></div>`
+    const capabilities=[['Свой профиль (просмотр)','✓','✓','✓'],['Профиль своей команды','—','✓','✓'],['Профили сотрудников организации','—','—','✓'],['Свои заявки (создание)','✓','—','—'],['Согласование заявок команды','—','✓','—'],['Просмотр своей команды','—','✓','—'],['Запрос на добавление в команду','—','✓','—'],['Подтверждение состава команды','—','—','✓'],['Все заявки (просмотр)','—','—','✓'],['Назначение курсов','—','—','✓'],['Управление ролями','—','—','✓'],['База знаний и интеграции','—','—','✓']];
+    const joins=(S.teamJoins||[]).filter(x=>x.status==='pending');
+    const teamPanel=`<section class="rbac-panel"><div class="rbac-panel-title"><div><h2>Заявки на формирование команд</h2><p>Руководитель запрашивает сотрудника, HR подтверждает назначение.</p></div></div>${joins.length?joins.map(x=>`<div class="team-join-row"><div><strong>${esc(x.employee_name)}</strong><small>${esc(x.manager_name)} · ${esc(x.department)}</small></div><div class="team-join-actions"><button class="btn secondary small" data-action="team-decision" data-id="${esc(x.id)}" data-approved="false">Отклонить</button><button class="btn small" data-action="team-decision" data-id="${esc(x.id)}" data-approved="true">Подтвердить</button></div></div>`).join(''):'<p class="muted">Новых запросов нет.</p>'}</section>`;
+    return `<div class="rbac-screen"><div class="rbac-top"><div><span class="eyebrow">HR / БЕЗОПАСНОСТЬ ДОСТУПА</span><h1>Роли и доступы</h1><p>Настраивайте доступ к разделам JanaMen. Должность и системная роль — разные понятия.</p></div><span class="rbac-security">&nbsp; Права проверяются сервером</span></div><div class="rbac-stats">${[['Всего пользователей',users.length,'all'],['Сотрудники',count('employee'),'employee'],['Руководители',count('manager'),'manager'],['HR / администраторы',count('hr'),'hr']].map(([title,num,kind])=>`<div class="rbac-stat"><small>${title}</small><strong>${num}</strong><span class="rbac-stat-dot ${kind}"></span></div>`).join('')}</div><section class="rbac-panel"><div class="rbac-panel-title"><div><h2>Сотрудники и доступы</h2><p>Роль определяет доступные разделы и действия.</p></div><label class="rbac-search-wrap"><span>⌕</span><input id="rbac-search" type="search" placeholder="Поиск по имени или отделу" aria-label="Поиск сотрудников"></label></div><div class="rbac-table-wrap"><table class="rbac-table"><thead><tr><th>Сотрудник</th><th>Должность / подразделение</th><th>Роль в системе</th><th>Доступ</th><th></th></tr></thead><tbody id="rbac-users">${users.map(u=>`<tr data-rbac-search="${esc((u.name+' '+u.department+' '+u.position+' '+u.username).toLowerCase())}"><td><div class="rbac-person"><span class="rbac-avatar">${esc(initial(u.name))}</span><span><strong>${esc(u.name)}</strong><small>@${esc(u.username)}${u.username===S.user.username?' · Вы':''}</small></span></div></td><td><strong>${esc(u.position)}</strong><small>${esc(u.department)}</small></td><td><span class="rbac-role ${esc(u.role)}">${esc(RBAC_ROLES[u.role]?.name||u.role)}</span></td><td><span class="rbac-access ${u.active?'on':'off'}">${u.active?'Активен':'Неактивен'}</span></td><td><button class="rbac-view-profile" data-action="view-profile" data-id="${esc(u.id)}">Профиль ↗</button><button class="rbac-edit" data-action="rbac-edit" data-id="${esc(u.username)}" ${u.username===S.user.username?'disabled title="Собственную роль менять нельзя"':''}>${u.username===S.user.username?'Ваша роль':'Настроить →'}</button></td></tr>`).join('')}</tbody></table></div><p class="rbac-no-results hidden" id="rbac-no-results">Сотрудники не найдены.</p></section>${teamPanel}<section class="rbac-panel"><div class="rbac-panel-title"><div><h2>Матрица прав доступа</h2><p>Кто и что может делать в системе. Изменение роли применяет готовый набор прав.</p></div></div><div class="rbac-table-wrap"><table class="rbac-table rbac-matrix"><thead><tr><th>Действие</th><th>Сотрудник</th><th>Руководитель</th><th>HR / администратор</th></tr></thead><tbody>${capabilities.map(([name,...vals])=>`<tr><td>${name}</td>${vals.map(v=>`<td><span class="rbac-check ${v==='✓'?'yes':'no'}">${v}</span></td>`).join('')}</tr>`).join('')}</tbody></table></div><div class="rbac-footnote">Матрица показывает ключевые полномочия MVP. API дополнительно проверяет роль и принадлежность данных пользователю.</div></section></div>`
 }
 function rbacEdit(username){
     if(S.user.role!=='hr')return;
@@ -414,7 +425,7 @@ function page(){
 // вход и регистрация
 
 function auth(){
-    return `<div class="auth"><section class="auth-art"><div><h1>Работаем<br><em>для людей.</em></h1><p>Заявки, обучение, команда и ответы на вопросы — в одной цифровой HR-платформе.</p></div></section><section class="auth-formside"><div class="auth-box"><div class="eyebrow">ДОБРО ПОЖАЛОВАТЬ</div><h2>${S.auth==='login'?'Ваше пространство.':'Присоединиться.'}</h2><p>${S.auth==='login'?'Войдите, чтобы продолжить работу. Или откройте одну из демо-ролей ниже.':'Оставьте заявку на доступ. Регистрация пока работает в демонстрационном режиме.'}</p><div class="tabs auth-tabs ${S.auth==='register'?'is-register':'is-login'}"><button class="${S.auth==='login'?'active':''}" data-auth="login">Вход</button><button class="${S.auth==='register'?'active':''}" data-auth="register">Регистрация</button></div>${S.auth==='login'?`<form id="login-form"><div class="formgroup"><label>Логин</label><input class="field" name="username" placeholder="Ваш логин" required autocomplete="username"></div><div class="formgroup"><label>Пароль</label><input class="field" type="password" name="password" placeholder="Пароль" required autocomplete="current-password"></div><button class="btn">Войти в JanaMen ↗</button></form><div class="demo"><div class="eyebrow">БЫСТРОЕ ДЕМО / БЕЗ РЕГИСТРАЦИИ</div>${[['aliya','Employee2026!','Сотрудник','Личные заявки и обучение'],['daniyar','Manager2026!','Руководитель','Решения и команда'],['madina','Hr2026!','HR / администратор','Люди, курсы и процессы']].map(([u,p,t,d])=>`<button data-demo="${u}" data-pass="${p}"><span><strong>${t}</strong><small style="display:block;margin-top:5px">${d}</small></span>↗</button>`).join('')}</div>`:`<form id="register-form"><div class="formgroup"><label>Имя и фамилия</label><input class="field" name="name" placeholder="Как к вам обращаться" required minlength="3"></div><div class="formgroup"><label>Корпоративная почта</label><input class="field" name="email" type="email" placeholder="name@company.kz" required></div><div class="formgroup"><label>Подразделение</label><input class="field" name="department" placeholder="Ваш отдел" required></div><button class="btn">Отправить демо-заявку ↗</button><p class="muted" style="font-size:12px">Заявка сохраняется только в браузере. Создание аккаунта будет подключено после переработки бэкенда.</p></form>`}</div></section></div>`
+    return `<div class="auth"><section class="auth-art"><div><h1>Работаем<br><em>для людей.</em></h1><p>Заявки, обучение, команда и ответы на вопросы — в одной цифровой HR-платформе.</p></div></section><section class="auth-formside"><div class="auth-box"><div class="eyebrow">ДОБРО ПОЖАЛОВАТЬ</div><h2>${S.auth==='login'?'Ваше пространство.':'Присоединиться.'}</h2><p>${S.auth==='login'?'Войдите, чтобы продолжить работу. Или откройте одну из демо-ролей ниже.':'Создайте аккаунт сотрудника и войдите в систему.'}</p><div class="tabs auth-tabs ${S.auth==='register'?'is-register':'is-login'}"><button class="${S.auth==='login'?'active':''}" data-auth="login">Вход</button><button class="${S.auth==='register'?'active':''}" data-auth="register">Регистрация</button></div>${S.auth==='login'?`<form id="login-form"><div class="formgroup"><label>Логин</label><input class="field" name="username" placeholder="Ваш логин" required autocomplete="username"></div><div class="formgroup"><label>Пароль</label><input class="field" type="password" name="password" placeholder="Пароль" required autocomplete="current-password"></div><button class="btn">Войти в JanaMen ↗</button></form><div class="demo"><div class="eyebrow">БЫСТРОЕ ДЕМО / БЕЗ РЕГИСТРАЦИИ</div>${[['aliya','Employee2026!','Сотрудник','Личные заявки и обучение'],['daniyar','Manager2026!','Руководитель','Решения и команда'],['madina','Hr2026!','HR / администратор','Люди, курсы и процессы']].map(([u,p,t,d])=>`<button data-demo="${u}" data-pass="${p}"><span><strong>${t}</strong><small style="display:block;margin-top:5px">${d}</small></span>↗</button>`).join('')}</div>`:`<form id="register-form"><div class="formgroup"><label>Имя и фамилия</label><input class="field" name="name" placeholder="Имя Фамилия" required minlength="3" maxlength="100"></div><div class="formgroup"><label>Логин</label><input class="field" name="username" placeholder="Например, aigerim" required minlength="3" maxlength="30" pattern="[a-zA-Z][a-zA-Z0-9_.-]{2,29}" autocomplete="username"></div><div class="formgroup"><label>Электронная почта</label><input class="field" name="email" type="email" placeholder="name@company.kz" required></div><div class="formgroup"><label>Подразделение</label><select class="field" name="department" required><option value="Операционный департамент">Операционный департамент</option><option value="HR">HR</option><option value="IT">IT</option><option value="Логистика">Логистика</option></select></div><div class="formgroup"><label>Пароль</label><input class="field" name="password" type="password" placeholder="От 8 символов, буквы и цифры" minlength="8" required autocomplete="new-password"></div><div class="formgroup"><label>Повторите пароль</label><input class="field" name="password_confirm" type="password" minlength="8" required autocomplete="new-password"></div><button class="btn">Создать аккаунт ↗</button><p class="muted" style="font-size:12px">Новый аккаунт получает роль сотрудника. Для команды Тимура выберите «Операционный департамент». Назначение руководителя подтверждает HR.</p></form>`}</div></section></div>`
 }
 
 // переключаем форму
@@ -447,7 +458,12 @@ function render(){
 
 let pageTransitionBusy = false;
 async function navigateTo(nextPage) {
-    if (pageTransitionBusy || nextPage === S.page) return;
+    if (pageTransitionBusy || nextPage === S.page) {
+        if (nextPage === 'team' && S.user?.role === 'manager') {
+            try { S.teamAvailable = await api('/team/available'); S.team = await api('/team'); S.teamJoins = await api('/team/join-requests'); render(); } catch(error) { toast(error.message); }
+        }
+        return;
+    }
     pageTransitionBusy = true;
 
     const content = document.querySelector('#content');
@@ -460,6 +476,12 @@ async function navigateTo(nextPage) {
 
     const leavingNotifications = S.page === 'notifications' &&
         nextPage !== 'notifications' && S.notes.some(note => note.unread);
+
+    if (nextPage === 'team' && S.user?.role === 'manager') {
+        try {
+            [S.teamAvailable, S.team, S.teamJoins] = await Promise.all([api('/team/available'), api('/team'), api('/team/join-requests')]);
+        } catch(error) { toast(error.message); }
+    }
 
     S.page = nextPage;
     S.filter = 'all';
@@ -571,6 +593,13 @@ document.addEventListener('click',async e=>{
     }
     const b=e.target.closest('[data-page],[data-action],[data-auth],[data-demo],[data-filter],[data-question]');
     if(!b)return;
+    if (b.dataset.action === 'refresh-team') {
+        try {
+            [S.teamAvailable, S.team, S.teamJoins] = await Promise.all([api('/team/available'), api('/team'), api('/team/join-requests')]);
+            render(); toast('Список сотрудников обновлён');
+        } catch(error) { toast(error.message); }
+        return;
+    }
     if (b.dataset.page) {
         await navigateTo(b.dataset.page);
     }
@@ -597,6 +626,10 @@ document.addEventListener('click',async e=>{
         try{
             if(a==='menu')document.body.classList.toggle('menu-open');
             if(a==='rbac-edit')rbacEdit(id);
+            if(a==='team-decision'){
+                await api('/hr/team/join-requests/'+encodeURIComponent(id)+'/decision',{method:'POST',body:JSON.stringify({approved:b.dataset.approved==='true'})});
+                await sync();render();toast('Решение по команде сохранено');
+            }
             if(a==='view-profile')await viewProfile(id);
             if(a==='academy-assign')academyAssign();
             if(a==='logout')await signOut();
@@ -723,6 +756,10 @@ document.addEventListener('submit',async e=>{
     e.preventDefault();
     const f=e.target,d=new FormData(f);
     try{
+        if(f.id==='team-join-form'){
+            await api('/team/join-requests',{method:'POST',body:JSON.stringify({employee_id:d.get('employee_id')})});
+            await sync();render();toast('Запрос отправлен HR');
+        }
         if(f.id==='rbac-role-form'){
             const username=f.dataset.username,role=d.get('role');
             if(username===S.user.username)throw Error('Нельзя изменить собственную роль');
@@ -739,12 +776,12 @@ document.addEventListener('submit',async e=>{
         }
         if(f.id==='login-form')await signIn(d.get('username'),d.get('password'));
         if(f.id==='register-form'){
-            localStorage.setItem('jana_registration_demo',JSON.stringify({
-                name:d.get('name'),email:d.get('email'),department:d.get('department'),created_at:new Date().toISOString()
-            }));
-            S.auth='login';
-            render();
-            toast('Демо-заявка сохранена в этом браузере. Для входа выберите демо-роль.')
+            if(d.get('password')!==d.get('password_confirm'))throw Error('Пароли не совпадают');
+            const username=String(d.get('username')).trim().toLowerCase();
+            await api('/auth/register',{method:'POST',body:JSON.stringify({
+                name:d.get('name'),username,email:d.get('email'),department:d.get('department'),password:d.get('password')
+            })});
+            await signIn(username,d.get('password'));
         }
         if(f.id==='request-form'){
             const vacation=d.get('type')==='Отпуск';

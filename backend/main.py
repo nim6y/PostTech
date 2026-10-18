@@ -4,6 +4,10 @@ from pathlib import Path
 from typing import Optional
 
 import hmac
+import hashlib
+import json
+import os
+import sqlite3
 import re
 import secrets
 import threading
@@ -102,6 +106,47 @@ SESSIONS: dict[str, str] = {}
 
 REQUEST_LOCK = threading.RLock()
 COURSE_LOCK = threading.RLock()
+TEAM_LOCK = threading.RLock()
+TEAM_JOIN_REQUESTS = []
+
+# Зарегистрированные пользователи хранятся в SQLite; демо-пользователи остаются в памяти.
+ACCOUNT_LOCK = threading.RLock()
+DB_PATH = Path(os.environ.get("JANAMEN_DB_PATH", str(ROOT / "data" / "accounts.sqlite3")))
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+def db_connection():
+    conn = sqlite3.connect(DB_PATH, timeout=15)
+    conn.execute("CREATE TABLE IF NOT EXISTS accounts (username TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, profile_json TEXT NOT NULL)")
+    return conn
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    derived = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 260000)
+    return f"pbkdf2_sha256$260000${salt.hex()}${derived.hex()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        algorithm, rounds, salt, digest = stored.split("$")
+        if algorithm != "pbkdf2_sha256":
+            return False
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), int(rounds))
+        return hmac.compare_digest(actual, bytes.fromhex(digest))
+    except (ValueError, TypeError):
+        return False
+
+
+def load_registered_accounts():
+    with db_connection() as conn:
+        for username, email, password_hash, profile_json in conn.execute("SELECT username,email,password_hash,profile_json FROM accounts"):
+            if username not in USERS:
+                USERS[username] = json.loads(profile_json)
+                PASSWORDS[username] = password_hash
+
+
+load_registered_accounts()
 
 # демо-лимит аванса
 
@@ -543,6 +588,14 @@ class LoginBody(BaseModel):
     password: str = Field(min_length=1, max_length=200)
 
 
+class RegisterBody(BaseModel):
+    name: str = Field(min_length=3, max_length=100)
+    username: str = Field(min_length=3, max_length=30)
+    email: str = Field(min_length=5, max_length=150)
+    department: str = Field(min_length=2, max_length=100)
+    password: str = Field(min_length=8, max_length=128)
+
+
 class RequestBody(BaseModel):
     type: str = Field(pattern="^(Отпуск|Аванс)$")
     period: str = Field(min_length=2, max_length=100)
@@ -570,6 +623,15 @@ class RoleBody(BaseModel):
     role: str = Field(pattern="^(employee|manager|hr)$")
 
 
+class TeamJoinBody(BaseModel):
+    employee_id: str
+
+
+class TeamDecisionBody(BaseModel):
+    approved: bool
+
+
+
 # проверка состояния сервера
 
 
@@ -585,6 +647,44 @@ def health():
 # авторизация и выход
 
 
+@app.post("/api/auth/register", status_code=201)
+def register(body: RegisterBody):
+    username = body.username.strip().lower()
+    email = body.email.strip().lower()
+    name = " ".join(body.name.split())
+    department = body.department.strip()
+    if not re.fullmatch(r"[a-z][a-z0-9_.-]{2,29}", username):
+        raise HTTPException(422, "Логин: латинские буквы, цифры, точка, дефис или подчёркивание; первый символ — буква")
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        raise HTTPException(422, "Укажите корректную электронную почту")
+    if len(name) < 3 or len(department) < 2:
+        raise HTTPException(422, "Заполните имя и подразделение")
+    if not re.search(r"[A-Za-z]", body.password) or not re.search(r"[0-9]", body.password):
+        raise HTTPException(422, "Пароль должен содержать буквы и цифры")
+    account = {
+        "id": "u-" + uuid.uuid4().hex[:16], "username": username,
+        "name": name, "company": "Jana Post", "position": "Сотрудник",
+        "department": department, "manager": "—", "manager_id": None,
+        "hire_date": date.today().isoformat(), "vacation_days": 0,
+        "role": "employee", "active": True,
+    }
+    with ACCOUNT_LOCK:
+        if username in USERS:
+            raise HTTPException(409, "Этот логин уже занят")
+        with db_connection() as conn:
+            if conn.execute("SELECT 1 FROM accounts WHERE email=?", (email,)).fetchone():
+                raise HTTPException(409, "Эта почта уже зарегистрирована")
+            hashed = hash_password(body.password)
+            try:
+                conn.execute("INSERT INTO accounts VALUES (?,?,?,?)", (username, email, hashed, json.dumps(account, ensure_ascii=False)))
+                conn.commit()
+            except sqlite3.IntegrityError:
+                raise HTTPException(409, "Логин или почта уже зарегистрированы")
+        USERS[username] = account
+        PASSWORDS[username] = hashed
+    return {"ok": True, "username": username, "message": "Аккаунт создан. Теперь войдите с логином и паролем."}
+
+
 @app.post("/api/auth/login")
 def login(body: LoginBody):
     username = body.username.strip().lower()
@@ -593,10 +693,7 @@ def login(body: LoginBody):
     if (
         not account
         or not account["active"]
-        or not hmac.compare_digest(
-            body.password,
-            PASSWORDS.get(username, "invalid"),
-        )
+        or not (verify_password(body.password, PASSWORDS[username]) if PASSWORDS.get(username, "").startswith("pbkdf2_sha256$") else hmac.compare_digest(body.password, PASSWORDS.get(username, "invalid")))
     ):
         raise HTTPException(
             401,
@@ -1148,6 +1245,81 @@ def team(
     ]
 
 
+# формирование команды: руководитель запрашивает, HR подтверждает
+
+# Сопоставляем отделы с учётом регистра, пробелов и буквы ё.
+def same_department(left, right):
+    def normalized(value):
+        return " ".join(str(value or "").replace("ё", "е").casefold().split())
+    return normalized(left) == normalized(right)
+
+
+@app.get("/api/team/available")
+def team_available(authorization: Optional[str] = Header(default=None)):
+    manager = get_user(authorization)
+    require_role(manager, "manager")
+    return [{"id": x["id"], "name": x["name"], "position": x["position"],
+             "department": x["department"]} for x in USERS.values()
+            if x["active"] and x["role"] == "employee"
+            and same_department(x["department"], manager["department"])
+            and not x.get("manager_id")]
+
+
+@app.get("/api/team/join-requests")
+def team_join_requests(authorization: Optional[str] = Header(default=None)):
+    user = get_user(authorization)
+    require_role(user, "manager", "hr")
+    with TEAM_LOCK:
+        return [dict(x) for x in TEAM_JOIN_REQUESTS
+                if user["role"] == "hr" or x["manager_id"] == user["id"]]
+
+
+@app.post("/api/team/join-requests")
+def request_team_member(body: TeamJoinBody, authorization: Optional[str] = Header(default=None)):
+    manager = get_user(authorization)
+    require_role(manager, "manager")
+    with TEAM_LOCK:
+        employee = next((x for x in USERS.values() if x["id"] == body.employee_id), None)
+        if not employee or not employee["active"] or employee["role"] != "employee":
+            raise HTTPException(404, "Доступный сотрудник не найден")
+        if not same_department(employee["department"], manager["department"]):
+            raise HTTPException(403, "Можно запрашивать сотрудников только своего отдела")
+        if employee.get("manager_id"):
+            raise HTTPException(409, "У сотрудника уже есть руководитель")
+        if any(x["employee_id"] == employee["id"] and x["status"] == "pending" for x in TEAM_JOIN_REQUESTS):
+            raise HTTPException(409, "Заявка на этого сотрудника уже ожидает решения")
+        req = {"id": "TEAM-" + uuid.uuid4().hex[:8].upper(),
+               "employee_id": employee["id"], "employee_name": employee["name"],
+               "manager_id": manager["id"], "manager_name": manager["name"],
+               "department": employee["department"], "status": "pending", "created_at": stamp()}
+        TEAM_JOIN_REQUESTS.insert(0, req)
+        return dict(req)
+
+
+@app.post("/api/hr/team/join-requests/{request_id}/decision")
+def decide_team_join(request_id: str, body: TeamDecisionBody,
+                     authorization: Optional[str] = Header(default=None)):
+    hr = get_user(authorization)
+    require_role(hr, "hr")
+    with TEAM_LOCK:
+        req = next((x for x in TEAM_JOIN_REQUESTS if x["id"] == request_id), None)
+        if not req:
+            raise HTTPException(404, "Заявка не найдена")
+        if req["status"] != "pending":
+            raise HTTPException(409, "Решение по заявке уже принято")
+        employee = next((x for x in USERS.values() if x["id"] == req["employee_id"]), None)
+        manager = next((x for x in USERS.values() if x["id"] == req["manager_id"]), None)
+        if body.approved:
+            if not employee or not manager or not employee["active"] or not manager["active"] or employee["role"] != "employee" or manager["role"] != "manager" or not same_department(employee["department"], manager["department"]) or employee.get("manager_id"):
+                raise HTTPException(409, "Назначение невозможно: данные сотрудника или руководителя изменились")
+            employee["manager_id"] = manager["id"]
+            employee["manager"] = manager["name"]
+        req["status"] = "approved" if body.approved else "rejected"
+        req["decided_at"] = stamp()
+        req["decided_by"] = hr["name"]
+        return dict(req)
+
+
 # список курсов с учётом роли
 
 
@@ -1567,7 +1739,13 @@ def change_role(
             "Нельзя снять роль с последнего активного HR-администратора",
         )
 
-    target["role"] = body.role
+    with TEAM_LOCK:
+        if target["role"] == "manager" and body.role != "manager" and any(x.get("manager_id") == target["id"] for x in USERS.values()):
+            raise HTTPException(409, "Сначала переназначьте подчинённых руководителя")
+        if body.role != "employee":
+            target["manager_id"] = None
+            target["manager"] = "—"
+        target["role"] = body.role
 
     return {
         "ok": True,
